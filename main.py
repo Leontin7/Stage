@@ -1,32 +1,3 @@
-# import pandas as pd
-# import numpy as np
-
-# df = pd.read_csv("apple.csv", skiprows=[1, 2])
-# df = df.drop_duplicates(subset=["Price"])
-# df = df[["Price", "Close"]]
-# df = df.sort_values(by="Price")
-# df["Close_HA"] = (df["Open"] + df["High"] + df["Low"] + df["Close"]) / 4
-# #np.set_printoptions(threshold=np.inf)
-# liste = np.log(df["Close"].iloc[1:].values / df["Close"].iloc[:-1].values)
-
-# print(liste)
-
-
-
-# import pandas as pd
-# import numpy as np
-
-# df = pd.read_csv("apple.csv", skiprows=[1, 2])
-# df = df.rename(columns={"Price": "Date"})
-# df = df.drop_duplicates(subset=["Date"])
-# df = df.sort_values(by="Date")
-
-# df["Close_HA"] = (df["Open"] + df["High"] + df["Low"] + df["Close"]) / 4
-
-# log_returns = np.log(df["Close_HA"].iloc[1:].values / df["Close_HA"].iloc[:-1].values)
-
-# print(log_returns)
-
 import pandas as pd
 import numpy as np
 import torch
@@ -78,12 +49,16 @@ train_norm = (train - mu) / sigma
 val_norm = (val - mu) / sigma
 test_norm = (test - mu) / sigma
 
-def windows(serie, window):
+def windows(serie, window, seuil=5.0):
     x = []
     y = []
     for i in range(len(serie) - window):
-        x.append(serie[i : i + window])
-        y.append(serie[i + window])
+        fenetre = serie[i : i + window]
+        cible   = serie[i + window]
+        if np.any(np.abs(fenetre) > seuil) or np.abs(cible) > seuil:
+            continue
+        x.append(fenetre)
+        y.append(cible)
     return np.array(x), np.array(y)
 
 window = 20
@@ -130,16 +105,44 @@ loader_test = DataLoader(dataset_test, batch_size=BATCH_SIZE, shuffle=False)
 print(f"x_train_t: {x_train_t.shape}")
 print(f"Nb batches train: {len(loader_train)}")
 
+# class CNN1D(nn.Module):
+
+#     def __init__(self, dropout=0.5):
+#         super().__init__()
+
+#         self.conv1 = nn.Conv1d(in_channels=1, out_channels=128, kernel_size=20, padding='same')
+#         self.drop1 = nn.Dropout(p=dropout)
+#         self.bn1 = nn.BatchNorm1d(num_features=128, momentum=0.005)
+#         self.relu = nn.ReLU()
+#         self.fc = nn.Linear(128, 1)
+
+#     def forward(self, x):
+#         x = x.permute(0, 2, 1)
+#         x = self.conv1(x)
+#         x = self.drop1(x)
+#         x = self.bn1(x)
+#         x = self.relu(x)
+#         x = x.mean(dim=2)
+#         x = self.fc(x)
+#         x = x.squeeze(1)
+#         return x
+
 class CNN1D(nn.Module):
 
-    def __init__(self, dropout=0.2):
+    def __init__(self, dropout=0.5):
         super().__init__()
 
-        self.conv1 = nn.Conv1d(in_channels=1, out_channels=100, kernel_size=3, padding='same')
+        self.conv1 = nn.Conv1d(in_channels=1, out_channels=100, kernel_size=4, padding='same')
         self.drop1 = nn.Dropout(p=dropout)
-        self.bn1   = nn.BatchNorm1d(num_features=100, momentum=0.005)
-        self.relu  = nn.ReLU()
-        self.fc    = nn.Linear(100, 1)
+        self.bn1 = nn.BatchNorm1d(num_features=100, momentum=0.005)
+
+        self.conv2 = nn.Conv1d(in_channels=100, out_channels=100, kernel_size=4, padding='same')
+        self.pool1 = nn.MaxPool1d(kernel_size=2)
+        self.drop2 = nn.Dropout(p=dropout)
+        self.bn2 = nn.BatchNorm1d(num_features=100, momentum=0.005)
+
+        self.relu = nn.ReLU()
+        self.fc = nn.Linear(100, 1)
 
     def forward(self, x):
         x = x.permute(0, 2, 1)
@@ -147,12 +150,19 @@ class CNN1D(nn.Module):
         x = self.drop1(x)
         x = self.bn1(x)
         x = self.relu(x)
+        x = self.conv2(x)
+        x = self.pool1(x)
+        x = self.drop2(x)
+        x = self.bn2(x)
+        x = self.relu(x)
         x = x.mean(dim=2)
         x = self.fc(x)
         x = x.squeeze(1)
         return x
 
-model = CNN1D(dropout=0.2)
+model = CNN1D(dropout=0.5)
+
+#model = CNN1D(dropout=0.5)
 print(model)
 nb_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f"Nombre de parametres : {nb_params}")
@@ -199,8 +209,8 @@ for epoch in range(NB_EPOCHS):
         for x_batch, y_batch in loader_val:
             x_batch = x_batch.to(device)
             y_batch = y_batch.to(device)
-            y_pred  = model(x_batch)
-            loss    = criterion(y_pred, y_batch)
+            y_pred = model(x_batch)
+            loss = criterion(y_pred, y_batch)
             val_loss += loss.item()
 
     val_loss /= len(loader_val)
@@ -218,7 +228,7 @@ y_pred = y_pred_t.cpu().numpy()
 y_reel = y_test
 
 print()
-print("=== 10 premieres predictions vs valeurs reelles ===")
+print("10 premieres predictions vs reelles:")
 print(f"{'Jour':>5}  {'Predit':>10}  {'Reel':>10}  {'Erreur':>10}")
 print("-" * 42)
 for i in range(10):
